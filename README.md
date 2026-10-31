@@ -31,11 +31,11 @@ flowchart TD
 
 ## 1. Delivery
 
-![WhatsApp lure, contact blurred](images/01-whatsapp-lure.jpg)
+![WhatsApp lure, contact blurred](01-whatsapp-lure.jpg)
 
 The message used a classic invoice-fraud script: urgency ("resolve this payment gap"), authority ("forward it to your finance head") and platform steering ("open it on a computer", because the payload only runs on Windows). The account owner sent a spam warning 47 minutes later, confirming the account was hijacked.
 
-![Account owner's warning, contact blurred](images/02-owner-warning.jpg)
+![Account owner's warning, contact blurred](02-owner-warning.jpg)
 
 ## 2. Static analysis
 
@@ -46,7 +46,7 @@ The message used a classic invoice-fraud script: urgency ("resolve this payment 
 | `I1030102341.exe` | 360 KB | Genuine Menksoft `SETTINGM.exe` (2017), validly signed; imports 3 functions from `Is.dll` |
 | `Is.Dll` | 4.28 MB | Malicious, Hidden + System, compiled 29 Oct 2026 17:03 UTC, export name `MSEdgeWebView.dll` |
 
-![VHD contents in Kali: the hidden Is.Dll is visible on Linux](images/03-vhd-contents-kali.png)
+![VHD contents in Kali: the hidden Is.Dll is visible on Linux](03-vhd-contents-kali.png)
 
 Key findings from `Is.Dll`:
 
@@ -99,11 +99,11 @@ Decrypted strings revealed:
 | 21:40 | **Defender killed**: `MsMpEng` gone, real-time protection off, no detection logged |
 | 21:40:39 | First DNS lookup for `wwwapko[.]top`; 1,080 lookups in under an hour |
 
-![Victim view and the relaunched rundll32](images/04-victim-view-rundll32.png)
+![Victim view and the relaunched rundll32](04-victim-view-rundll32.png)
 
-![Defender off and the ardrv driver running](images/05-defender-killed-ardrv.png)
+![Defender off and the ardrv driver running](05-defender-killed-ardrv.png)
 
-![Autoruns: the only new entry is the signed OPSWAT driver](images/06-autoruns-ardrv.png)
+![Autoruns: the only new entry is the signed OPSWAT driver](06-autoruns-ardrv.png)
 
 The dropped driver's SHA-256 `7504887e...` matches **OPSWAT AppRemover `ardrv.sys`, CVE-2026-36425**: its IOCTL `0x2420031` terminates any process ID from kernel mode. No Run key or scheduled task was created, so persistence would come from the next stage.
 
@@ -134,13 +134,13 @@ With a working fake DNS, the malware resolved the domain and connected to TCP 44
 | Server | Windows Server 2022 (build 20348), default hostname `WIN-K4O1LQD39RU`, WinRM 5985 open |
 | Sibling | `156.234.7[.]170`, same hostname, OS and location, online about 20 h earlier |
 
-![Shodan: two servers share the default hostname](images/07-shodan-hostname-pivot.png)
+![Shodan: two servers share the default hostname](07-shodan-hostname-pivot.png)
 
 **Preparation timeline (AEST):** C2 server online 29 Oct 01:12 → domain registered 01:49 → DLL compiled 30 Oct 03:03 → VHD built 12:24 → lure sent 17:34. Under 40 hours from buying the domain to attacking.
 
 ## 6. Family and attribution
 
-![VirusTotal: YARA rules identify a ValleyRAT / Winos 4.0 stager](images/08-virustotal-yara.png)
+![VirusTotal: YARA rules identify a ValleyRAT / Winos 4.0 stager](08-virustotal-yara.png)
 
 VirusTotal YARA rules (THOR `MAL_Valley_RAT_Downloader_Nov25`, CAPE `WinosStager`) identify the DLL as a **Winos 4.0 / ValleyRAT** stager, a Gh0st RAT descendant that researchers attribute to **Silver Fox** (also called Void Arachne). The Chinese section name, UTC+8 build clock, Hong Kong registrant and Hong Kong hosting all fit.
 
