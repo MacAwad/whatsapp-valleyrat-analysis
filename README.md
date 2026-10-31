@@ -4,14 +4,14 @@
 **Date:** 30 Oct to 1 Nov 2026 (times in AEST, UTC+10)
 **Status:** Reported to ASD's ACSC (ReportCyber), ThreatFox and the domain registrar
 
-> A "payment statement" ZIP sent from a hijacked WhatsApp account turned out to be a Winos 4.0 / ValleyRAT stager. In an isolated lab it killed Microsoft Defender with a signed vulnerable driver, then beaconed to a previously unreported C2 domain over a custom binary protocol on TCP 443. Passive OSINT then found a second server from the same operator.
+> A "payment statement" ZIP sent from a hijacked WhatsApp account turned out to be a Winos 4.0 / ValleyRAT stager. In an isolated lab it killed Microsoft Defender with a signed vulnerable driver, then beaconed to a previously unreported C2 domain over a custom binary protocol on TCP 443. Passive OSINT traced the C2 to a pool of disposable Windows servers in Hong Kong.
 
 ## TL;DR
 
 - **Delivery:** WhatsApp message from a hijacked business contact, ZIP > VHD > signed EXE + hidden DLL (DLL sideloading)
 - **Defence evasion:** Mark-of-the-Web bypass (VHD), RC4-encrypted strings, UAC bypass, **BYOVD**: OPSWAT `ardrv.sys` (CVE-2026-36425) used to kill Microsoft Defender
 - **C2:** `wwwapko[.]top` → `156.234.7[.]71`, raw TCP/443 (not TLS), 16-byte hello, beacon about every 67 s
-- **Infrastructure:** domain registered 2 days before the attack; C2 is a fresh Windows Server 2022 box in Hong Kong; a **sibling server** (`156.234.7[.]170`) found via its default hostname
+- **Infrastructure:** domain registered 2 days before the attack; C2 is a fresh Windows Server 2022 box in Hong Kong; its default hostname also appears on `156.234.7[.]170` a day earlier, most likely the same server before an IP change
 - **Family:** VirusTotal YARA rules identify it as a **Winos 4.0 / ValleyRAT** stager, a Gh0st RAT descendant attributed to the **Silver Fox** group
 - **New intel:** I found no public reports of the C2 domain or IPs and reported them first on ThreatFox
 
@@ -132,9 +132,11 @@ With a working fake DNS, the malware resolved the domain and connected to TCP 44
 | Domain | `wwwapko[.]top`, registered 28 Oct 2026 15:49 UTC via Gname.com, registrant region Hong Kong |
 | IP | `156.234.7[.]71`, AFRINIC block assigned to Yancy Limited (HK), AS138415; no abuse contact |
 | Server | Windows Server 2022 (build 20348), default hostname `WIN-K4O1LQD39RU`, WinRM 5985 open |
-| Sibling | `156.234.7[.]170`, same hostname, OS and location, online about 20 h earlier |
+| Earlier IP | `156.234.7[.]170`, same hostname, seen about 20 h before `.71`; most likely the same server before an IP change, or a clone |
 
-![Shodan: two servers share the default hostname](07-shodan-hostname-pivot.png)
+![Shodan: the default hostname appears on two IPs](07-shodan-hostname-pivot.png)
+
+**The neighbourhood:** `net:156.234.7.0/24 port:5985` returns 28 WinRM hosts, 24 of them default-named Windows Server 2022. At least 7 hostnames each appear on two IPs a few days apart, so hostname reuse is normal in this block (IP changes or cloned images), not unique to this operator. The block looks like a pool of disposable Windows servers; no other host was linked to this campaign without further evidence.
 
 **Preparation timeline (AEST):** C2 server online 29 Oct 01:12 → domain registered 01:49 → DLL compiled 30 Oct 03:03 → VHD built 12:24 → lure sent 17:34. Under 40 hours from buying the domain to attacking.
 
