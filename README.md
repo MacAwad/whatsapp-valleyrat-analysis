@@ -13,6 +13,7 @@
 - **C2:** `wwwapko[.]top` → `156.234.7[.]71`, raw TCP/443 (not TLS), 16-byte hello, beacon about every 67 s
 - **Infrastructure:** domain registered 2 days before the attack; C2 is a fresh Windows Server 2022 box in Hong Kong; its default hostname also appears on `156.234.7[.]170` a day earlier, most likely the same server before an IP change
 - **Family:** VirusTotal YARA rules identify it as a **Winos 4.0 / ValleyRAT** stager, a Gh0st RAT descendant attributed to the **Silver Fox** group
+- **Code:** reversed in Ghidra; mapped 15 functions, including a multi-driver AV killer, two UAC bypasses, a watchdog pair and decoy Microsoft traffic
 - **New intel:** I found no public reports of the C2 domain or IPs and reported them first on ThreatFox
 
 ## Attack chain
@@ -125,6 +126,48 @@ With a working fake DNS, the malware resolved the domain and connected to TCP 44
 
 **Retry pattern:** a new TCP connection every 2.5 s in bursts, and a fresh DNS lookup about every 67 s. This matches a Winos 4.0 stager asking its C2 for the core "online module". The real server was deliberately never contacted.
 
+## 4b. Code-level findings (Ghidra)
+
+I loaded `Is.Dll` into Ghidra 12.1.4 (static analysis only) and traced the lab behaviour back to the code. Ghidra recovered 23,215 functions, mostly statically linked MFC and C++ runtime. The malicious logic is a small "toolbox" in `.text`, called from a heavily obfuscated packed section.
+
+| Function (my name) | Address | What the code does |
+| --- | --- | --- |
+| `byovd_kill_av` | `0x100105b0` | Opens `\\.\ardrv`; if missing, drops the driver, installs and starts it as a kernel service; then loops over running AV processes and kills each one, pausing 2 s between passes |
+| `kill_process_via_driver` | `0x100155f0` | Sends the kill IOCTL for one PID. Supports three driver protocols (`0x22cef0`, `0x222024`, and a plain PID for ardrv's `0x2420031`); only the ardrv path is called in this build |
+| `open_driver` / `install_driver_service` / `start_driver_service` | `0x100158a0` / `0x10015760` / `0x10015940` | `CreateFileW`, `CreateServiceW`, `StartServiceW` |
+| `find_process_by_name` | `0x10016880` | Toolhelp snapshot, returns a PID by process name |
+| `rc4_decrypt_hex` | `0x1001dd90` | Decrypts the hex-encoded config strings with the RC4 key |
+| `uac_bypass_ms_settings` | `0x10019c30` | Writes the ms-settings `DelegateExecute` key, launches `ComputerDefaults.exe`, then deletes the key with `RegDeleteTreeW` |
+| `uac_bypass_cmstplua` | `0x100198a0` | CMSTPLUA elevation moniker through `CoGetObject` |
+| `download_and_run` | `0x100140d6` | 60-second retry window: `URLDownloadToFileW`, then curl, bitsadmin and certutil fallbacks; runs the file via `cmd /c` or a `.bat` |
+| `config_reader` | `0x1000c830` | Reads the Winos 4.0 config from `HKCU\Console\IpDate`: pipe-separated keys with pinyin abbreviations (`p`/`o`/`t` = C2 address, port, protocol; `fz` group, `bb` version, `bz` note) |
+| `beacon` | `0x1000caf0` | C2 loop: configured start delay, then connects through an event-based socket client (`WSAEventSelect`, `WSAIoctl`) and sleeps a configured interval. The config values are empty in the file and filled at runtime |
+| `Fake_traffic_thread` | `0x1000cd50` | Every 30 s requests Microsoft Edge `zh-cn/messages.json` and Microsoft telemetry to blend in |
+| `watchdog` | `0x1000ce50` | Sleeps 8 s, enforces one instance with a mutex, then every 20 s checks a second mutex and, if it is gone, calls into the packed code (most likely to relaunch the partner process) |
+| `driver_resource` | `0x1022d331` (packed) | Loads resource `0x418` "SettingsDatabase", the encrypted `ardrv.sys` |
+
+What the code explains from the lab:
+
+- **Missing ms-settings key:** the UAC bypass deletes it straight after use.
+- **Two cooperating processes:** the watchdog pair restarts each other.
+- **Extra `www.microsoft.com` and `browser.events.data.microsoft.com` lookups** in the capture: the decoy traffic thread.
+- **C2 domain never visible in the file:** the config is filled at runtime (registry or packed code).
+- **Where static analysis stops:** the toolbox functions are called from the packed section through long chains of jump-only functions (obfuscation). Following that needs a debugger.
+
+![Ghidra: the ardrv kill command 0x2420031 inside byovd_kill_av](ghidra-01-kill-ioctl.png)
+
+![Ghidra: the kill loop in assembly, pushing PID, IOCTL and driver handle](ghidra-02-kill-loop-asm.png)
+
+![Ghidra: kill_process_via_driver and its three driver protocols](ghidra-03-kill-process-via-driver.png)
+
+![Ghidra: call tree, one caller and the Windows APIs used](ghidra-04-call-tree.png)
+
+![Ghidra: the obfuscated jump chain from the packed section](ghidra-05-obfuscation-chain.png)
+
+![Ghidra: PDB name and GUID left in the DLL](ghidra-06-pdb-guid.png)
+
+Full decompiled code of these functions: [`ghidra_evidence.c`](ghidra_evidence.c)
+
 ## 5. Infrastructure (passive OSINT only)
 
 | Item | Finding |
@@ -154,7 +197,7 @@ VirusTotal YARA rules (THOR `MAL_Valley_RAT_Downloader_Nov25`, CAPE `WinosStager
 | --- | --- |
 | Initial Access | T1566.003 Spearphishing via Service |
 | Execution | T1204.002 Malicious File; T1059.003 Windows Command Shell |
-| Defense Evasion | T1553.005 MOTW Bypass; T1574.001 DLL (sideloading); T1564.001 Hidden Files; T1036.005 Match Legitimate Name; T1027 Obfuscated Files; T1218.011 Rundll32; T1218.007 Msiexec; T1562.001 Disable or Modify Tools |
+| Defense Evasion | T1553.005 MOTW Bypass; T1574.001 DLL (sideloading); T1564.001 Hidden Files; T1036.005 Match Legitimate Name; T1027 Obfuscated Files; T1218.011 Rundll32; T1218.007 Msiexec; T1562.001 Disable or Modify Tools; T1497.003 Time Based Evasion; T1070 Indicator Removal; T1112 Modify Registry |
 | Privilege Escalation | T1548.002 Bypass UAC; T1068 Exploitation for Privilege Escalation (BYOVD); T1543.003 Windows Service |
 | Command and Control | T1095 Non-Application Layer Protocol; T1571 Non-Standard Port; T1105 Ingress Tool Transfer |
 
@@ -170,6 +213,9 @@ VirusTotal YARA rules (THOR `MAL_Valley_RAT_Downloader_Nov25`, CAPE `WinosStager
 | Domain | `wwwapko[.]top` |
 | IP | `156.234.7[.]71`, `156.234.7[.]170` |
 | Hostname | `WIN-K4O1LQD39RU` |
+| Mutex | `0FBA498777699D14430F02F14CDD671A...` (392-character hex string) |
+| Registry | `HKCU\Console\IpDate` (Winos 4.0 config) |
+| PDB | `MSEdgeWebView.pdb`, GUID `ef26780e-6ca8-4c89-a8a8-a5e49a2f5ec4` |
 | Service | `ardrv` (kernel) |
 | Path | `C:\Users\Public\Libraries\<junk>\` |
 | Command line | `rundll32.exe "<path>\Is.Dll",vcruntime140_1_app` |
@@ -181,7 +227,7 @@ alert dns $HOME_NET any -> any any (msg:"WhatsApp VHD loader C2 domain lookup"; 
 alert tcp $HOME_NET any -> $EXTERNAL_NET 443 (msg:"WhatsApp VHD loader 16-byte C2 hello on 443"; flow:to_server,established; dsize:16; content:"|10 00 00 00|"; offset:0; depth:4; content:"|00|"; offset:13; depth:1; sid:1000002; rev:1;)
 ```
 
-Hunt for: new kernel services (Event ID 7045) from user folders, `rundll32` with `,vcruntime140_1_app`, new folders in `C:\Users\Public\Libraries`, and non-TLS traffic on port 443. Prevent with HVCI + the vulnerable driver blocklist, standard user accounts, and blocking double-click mounting of VHD/ISO files.
+Hunt for: new kernel services (Event ID 7045) from user folders, `rundll32` with `,vcruntime140_1_app`, new folders in `C:\Users\Public\Libraries`, the registry value `HKCU\Console\IpDate`, and non-TLS traffic on port 443. Prevent with HVCI + the vulnerable driver blocklist, standard user accounts, and blocking double-click mounting of VHD/ISO files.
 
 ## 10. Disclosure
 
@@ -200,4 +246,5 @@ The sample only ran in an isolated VM with no internet access. The real C2 was n
 - [CVE-2026-36425 OPSWAT AppRemover (ardrv.sys)](https://github.com/redteamfortress/CVE-2026-36425) · [LOLDrivers: ardrv.sys](https://www.loldrivers.io/drivers/9eb0156e-4c43-487f-be8c-40a7b19a4279/)
 - [The Hacker News: Silver Fox APT uses Winos 4.0](https://thehackernews.com/2025/02/silver-fox-apt-uses-winos-40-malware-in.html)
 - [The Hacker News: Fake installers deliver Winos 4.0](https://thehackernews.com/2025/05/hackers-use-fake-vpn-and-browser-nsis.html)
+- [eSentire: Winos4.0 online module staging component](https://www.esentire.com/blog/winos4-0-online-module-staging-component-used-in-cleversoar-campaign)
 - [Acronis TRU: Cambodia-focused cluster (same ardrv.sys hash)](https://www.acronis.com/en/tru/posts/cambodia-focused-cluster-uses-multi-stage-infection-chain-with-localized-lures/)
